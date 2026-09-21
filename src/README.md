@@ -53,15 +53,22 @@ and an equal-subject-weight macro average for MAE, RMSE, and MARD at 5, 30, and
 Main model:
 
 ```bash
-/home/wanghaobo/.conda/envs/pt110/bin/python -m src.train \
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 \
+.venv/bin/python -m src.train \
   --model world_model \
   --output-dir outputs/v1_world_model
 ```
 
+The GPU-tested defaults are `batch_size=2048` and `num_workers=4`. On the
+current training server this configuration uses only about 1.14 GiB on the RTX
+5880. Its measured epoch time is within roughly 3% of an A800 for this small
+recurrent model, so the RTX 5880 is the resource-efficient default.
+
 Baseline:
 
 ```bash
-/home/wanghaobo/.conda/envs/pt110/bin/python -m src.train \
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 \
+.venv/bin/python -m src.train \
   --model baseline \
   --output-dir outputs/v1_baseline
 ```
