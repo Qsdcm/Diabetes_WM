@@ -1,0 +1,21 @@
+# Generated datasets and reports
+Dataset_5min/
+
+# Local credentials
+authtoken.txt
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Notebook and editor state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# OS metadata
+.DS_Store
