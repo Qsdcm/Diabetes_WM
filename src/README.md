@@ -33,11 +33,20 @@ concept embeddings.
 
 - Existing subject-level train/validation/test manifests are consumed as-is.
 - Normalization statistics are computed from train subjects only.
+- CGM uses train-set mean/std z-score normalization. Insulin and Carb use
+  `log1p(x)` followed by train-set mean/std z-score normalization. Validation
+  and test reuse these exact train statistics without refitting.
 - Every window is checked to remain inside one `segment_id`.
 - Every history and target row must have both `cgm_observed=True` and
   `insulin_observed=True`.
 - Future CGM is returned only as the target and cannot be passed into either
   model's transition API.
+- Subject/source identifiers are returned as evaluation metadata only and are
+  never passed to model inputs.
+
+`test_metrics.json` stores window-micro metrics, separate per-subject metrics,
+and an equal-subject-weight macro average for MAE, RMSE, and MARD at 5, 30, and
+60 minutes (plus the overall 12-step rollout summary).
 
 ## Train
 

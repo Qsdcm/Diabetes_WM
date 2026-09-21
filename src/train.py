@@ -21,7 +21,7 @@ from src.data import (
     dataset_summary,
     make_loader,
 )
-from src.metrics import RolloutMetrics
+from src.metrics import SubjectLevelRolloutMetrics
 from src.models import build_model
 
 
@@ -42,8 +42,11 @@ def resolve_device(requested: str) -> torch.device:
     return device
 
 
-def move_batch(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
-    return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+def move_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    return {
+        key: value.to(device, non_blocking=True) if torch.is_tensor(value) else value
+        for key, value in batch.items()
+    }
 
 
 def train_epoch(
@@ -87,7 +90,7 @@ def evaluate(
     amp: bool,
 ) -> dict[str, Any]:
     model.eval()
-    metrics = RolloutMetrics()
+    metrics = SubjectLevelRolloutMetrics()
     normalized_squared_error = 0.0
     count = 0
     for batch in loader:
@@ -100,6 +103,7 @@ def evaluate(
         metrics.update(
             normalization.denormalize_cgm(prediction),
             normalization.denormalize_cgm(target),
+            batch["subject_id"],
         )
     return {
         "normalized_mse": normalized_squared_error / max(count, 1),
@@ -227,7 +231,7 @@ def main(args: argparse.Namespace) -> None:
             grad_clip=args.grad_clip,
         )
         validation = evaluate(model, loaders["val"], normalization, device, amp=amp)
-        val_rmse = validation["metrics"]["overall"]["rmse_mg_dl"]
+        val_rmse = validation["metrics"]["micro"]["overall"]["rmse_mg_dl"]
         scheduler.step(val_rmse)
         record = {
             "epoch": epoch,

@@ -21,10 +21,10 @@ TIME_COLUMNS = ("time_sin", "time_cos")
 class NormalizationStats:
     cgm_mean: float
     cgm_std: float
-    insulin_mean: float
-    insulin_std: float
-    carb_mean: float
-    carb_std: float
+    insulin_log1p_mean: float
+    insulin_log1p_std: float
+    carb_log1p_mean: float
+    carb_log1p_std: float
 
     def to_dict(self) -> dict[str, float]:
         return asdict(self)
@@ -34,13 +34,21 @@ class NormalizationStats:
         return cls(**{key: float(value) for key, value in values.items()})
 
     def normalize_values(self, values: np.ndarray) -> np.ndarray:
+        if values.shape[-1] != 3:
+            raise ValueError("values must contain [CGM, Insulin, Carb]")
+        if np.any(values[..., 1:3] < 0):
+            raise ValueError("Insulin and Carb must be non-negative before log1p")
+        transformed = values.astype(np.float32, copy=True)
+        transformed[..., 1:3] = np.log1p(transformed[..., 1:3])
         means = np.asarray(
-            [self.cgm_mean, self.insulin_mean, self.carb_mean], dtype=np.float32
+            [self.cgm_mean, self.insulin_log1p_mean, self.carb_log1p_mean],
+            dtype=np.float32,
         )
         stds = np.asarray(
-            [self.cgm_std, self.insulin_std, self.carb_std], dtype=np.float32
+            [self.cgm_std, self.insulin_log1p_std, self.carb_log1p_std],
+            dtype=np.float32,
         )
-        return (values - means) / stds
+        return (transformed - means) / stds
 
     def denormalize_cgm(self, values: torch.Tensor) -> torch.Tensor:
         return values * self.cgm_std + self.cgm_mean
@@ -84,6 +92,9 @@ def compute_train_normalization(
         )
         if not np.isfinite(values).all():
             raise ValueError(f"Non-finite training values in {path}")
+        if np.any(values[:, 1:3] < 0):
+            raise ValueError(f"Negative Insulin/Carb values in {path}")
+        values[:, 1:3] = np.log1p(values[:, 1:3])
         count += len(values)
         sums += values.sum(axis=0)
         squared_sums += np.square(values).sum(axis=0)
@@ -95,10 +106,10 @@ def compute_train_normalization(
     return NormalizationStats(
         cgm_mean=means[0],
         cgm_std=stds[0],
-        insulin_mean=means[1],
-        insulin_std=stds[1],
-        carb_mean=means[2],
-        carb_std=stds[2],
+        insulin_log1p_mean=means[1],
+        insulin_log1p_std=stds[1],
+        carb_log1p_mean=means[2],
+        carb_log1p_std=stds[2],
     )
 
 
@@ -147,6 +158,10 @@ class WindowDataset(Dataset):
         manifest = manifest.reset_index(drop=True)
         categories = pd.Categorical(manifest["source_file"])
         self.source_files = [str(item) for item in categories.categories]
+        self.subject_keys = [
+            Path(relative_path).with_suffix("").as_posix()
+            for relative_path in self.source_files
+        ]
         self.source_codes = categories.codes.astype(np.int16, copy=False)
         self.segment_ids = manifest["segment_id"].to_numpy(dtype=np.int32)
         self.starts = manifest["start_row"].to_numpy(dtype=np.int32)
@@ -208,8 +223,9 @@ class WindowDataset(Dataset):
     def __len__(self) -> int:
         return len(self.starts)
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
-        arrays = self.subjects[int(self.source_codes[index])]
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor | str]:
+        source_code = int(self.source_codes[index])
+        arrays = self.subjects[source_code]
         start = int(self.starts[index])
         target_start = int(self.target_starts[index])
         end = int(self.target_ends[index]) + 1
@@ -226,6 +242,8 @@ class WindowDataset(Dataset):
             "history": torch.from_numpy(history),
             "future_controls": torch.from_numpy(future_controls),
             "target_cgm": torch.from_numpy(target_cgm),
+            # Identifier is metadata for evaluation only and never a model input.
+            "subject_id": self.subject_keys[source_code],
         }
 
 

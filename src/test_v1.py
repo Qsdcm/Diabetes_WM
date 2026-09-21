@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.data import NormalizationStats, WindowDataset
-from src.metrics import RolloutMetrics
+from src.data import NormalizationStats, WindowDataset, compute_train_normalization
+from src.metrics import RolloutMetrics, SubjectLevelRolloutMetrics
 from src.models import DirectGRUBaseline, WorldModelV1
 
 
@@ -37,6 +37,20 @@ class ModelTests(unittest.TestCase):
             self.assertAlmostEqual(result[key]["mae_mg_dl"], 10.0)
             self.assertAlmostEqual(result[key]["rmse_mg_dl"], 10.0)
             self.assertAlmostEqual(result[key]["mard_pct"], 10.0, places=5)
+
+    def test_subject_micro_and_macro_metrics(self):
+        target = torch.full((4, 12), 100.0)
+        prediction = target.clone()
+        prediction[0] += 10.0
+        prediction[1:] += 2.0
+        metrics = SubjectLevelRolloutMetrics()
+        metrics.update(prediction, target, ["A", "B", "B", "B"])
+        result = metrics.compute()
+
+        self.assertAlmostEqual(result["micro"]["5min"]["mae_mg_dl"], 4.0)
+        self.assertAlmostEqual(result["subject_macro"]["5min"]["mae_mg_dl"], 6.0)
+        self.assertAlmostEqual(result["subject_macro"]["60min"]["rmse_mg_dl"], 6.0)
+        self.assertEqual(set(result["per_subject"]), {"A", "B"})
 
 
 class DatasetTests(unittest.TestCase):
@@ -78,7 +92,51 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(sample["history"].shape, (24, 5))
         self.assertEqual(sample["future_controls"].shape, (12, 4))
         self.assertEqual(sample["target_cgm"].shape, (12,))
+        self.assertEqual(sample["subject_id"], "AZT1D/Subject_1")
         self.assertAlmostEqual(sample["target_cgm"][0].item(), 2.4, places=5)
+        self.assertAlmostEqual(
+            sample["history"][0, 1].item(), np.log1p(0.1), places=5
+        )
+
+    def test_normalization_is_fit_on_train_with_log1p_controls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Dataset_5min"
+            index_root = root / "window_index_v1"
+            index_root.mkdir(parents=True)
+            for subject_id, values in {
+                "Train": ([100.0, 120.0], [0.0, 3.0], [0.0, 8.0]),
+                "Val": ([1000.0, 2000.0], [100.0, 200.0], [300.0, 400.0]),
+            }.items():
+                path = root / "AZT1D" / f"{subject_id}.csv"
+                path.parent.mkdir(exist_ok=True)
+                pd.DataFrame(
+                    {
+                        "cgm_mg_dl": values[0],
+                        "insulin_u_5min": values[1],
+                        "carb_g_5min": values[2],
+                        "cgm_observed": [True, True],
+                        "insulin_observed": [True, True],
+                    }
+                ).to_csv(path, index=False)
+            (index_root / "split_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "subjects": {
+                            "train": ["AZT1D/Train"],
+                            "val": ["AZT1D/Val"],
+                            "test": [],
+                        }
+                    }
+                )
+            )
+            stats = compute_train_normalization(root, index_root)
+
+        self.assertAlmostEqual(stats.cgm_mean, 110.0)
+        self.assertAlmostEqual(stats.cgm_std, 10.0)
+        self.assertAlmostEqual(stats.insulin_log1p_mean, np.log(4.0) / 2)
+        self.assertAlmostEqual(stats.insulin_log1p_std, np.log(4.0) / 2)
+        self.assertAlmostEqual(stats.carb_log1p_mean, np.log(9.0) / 2)
+        self.assertAlmostEqual(stats.carb_log1p_std, np.log(9.0) / 2)
 
 
 if __name__ == "__main__":

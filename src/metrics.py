@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
+from collections.abc import Sequence
 
 import torch
 
@@ -69,3 +71,60 @@ class RolloutMetrics:
                 stats["count"], stats["ae"], stats["se"], stats["ape"]
             )
         return result
+
+
+class SubjectLevelRolloutMetrics:
+    """Accumulate micro and equally weighted subject-level rollout metrics."""
+
+    def __init__(self) -> None:
+        self.micro = RolloutMetrics()
+        self.by_subject: dict[str, RolloutMetrics] = {}
+
+    def update(
+        self,
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        subject_ids: Sequence[str],
+    ) -> None:
+        if prediction.shape[0] != len(subject_ids):
+            raise ValueError("subject_ids length must match batch size")
+        self.micro.update(prediction, target)
+        positions: dict[str, list[int]] = defaultdict(list)
+        for index, subject_id in enumerate(subject_ids):
+            positions[str(subject_id)].append(index)
+        for subject_id, indices in positions.items():
+            accumulator = self.by_subject.setdefault(subject_id, RolloutMetrics())
+            accumulator.update(prediction[indices], target[indices])
+
+    @staticmethod
+    def _macro_average(
+        per_subject: dict[str, dict[str, dict[str, float]]]
+    ) -> dict[str, dict[str, float]]:
+        macro: dict[str, dict[str, float]] = {}
+        if not per_subject:
+            return macro
+        labels = ("overall", *HORIZONS.values())
+        metric_names = ("mae_mg_dl", "rmse_mg_dl", "mard_pct")
+        for label in labels:
+            macro[label] = {}
+            for metric_name in metric_names:
+                values = [
+                    subject_metrics[label][metric_name]
+                    for subject_metrics in per_subject.values()
+                    if math.isfinite(subject_metrics[label][metric_name])
+                ]
+                macro[label][metric_name] = (
+                    math.fsum(values) / len(values) if values else float("nan")
+                )
+        return macro
+
+    def compute(self) -> dict[str, object]:
+        per_subject = {
+            subject_id: self.by_subject[subject_id].compute()
+            for subject_id in sorted(self.by_subject)
+        }
+        return {
+            "micro": self.micro.compute(),
+            "per_subject": per_subject,
+            "subject_macro": self._macro_average(per_subject),
+        }
