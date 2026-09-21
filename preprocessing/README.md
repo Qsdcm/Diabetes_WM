@@ -61,3 +61,28 @@ Run the unit tests with:
 /home/wanghaobo/.conda/envs/pt110/bin/python -m unittest -v \
   preprocessing.test_preprocess_world_model
 ```
+
+## Leakage-safe V1 windows
+
+Build subject-disjoint train/validation/test indices only after the unified
+subject files exist:
+
+```bash
+/home/wanghaobo/.conda/envs/pt110/bin/python \
+  preprocessing/build_window_index.py
+```
+
+The V1 defaults use 24 history steps (2 hours), 12 target steps (1 hour), and
+stride 1. The split is deterministic and stratified by source dataset. A
+subject can occur in exactly one split. Windows never cross `segment_id`, and
+every input and target row must satisfy both `cgm_observed=True` and
+`insulin_observed=True`; interpolated CGM is therefore never used as a target.
+
+The generated files are written below `Dataset_5min/window_index_v1/`:
+
+```text
+train_windows.csv
+val_windows.csv
+test_windows.csv
+split_manifest.json
+```
