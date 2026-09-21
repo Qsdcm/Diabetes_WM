@@ -1,0 +1,69 @@
+# V1 continuous-state diabetes world model
+
+The V1 model estimates a latent physiological state from two hours of observed
+history, then recursively rolls that state forward using only future controls
+and disturbances. True future CGM is never an input to the transition module.
+
+## Inputs and rollout
+
+Historical input has five channels:
+
+```text
+[CGM, Insulin, Carb, time_sin, time_cos]
+```
+
+The main model encodes CGM, Insulin, Carb, and Time separately. Insulin and Carb
+carry learnable concept embeddings. Their representations are fused into an
+event embedding, and a GRU History Encoder maps 24 past steps to the current
+latent state. The future transition receives four channels only:
+
+```text
+[Insulin, Carb, time_sin, time_cos]
+```
+
+A single shared GRUCell recursively transitions the latent state for 12 future
+steps. An MLP decodes CGM from every state. Metrics are reported for steps 1,
+6, and 12, corresponding to 5, 30, and 60 minutes.
+
+The `baseline` model sends the five historical channels directly into a GRU
+and uses a simple control-only GRUCell rollout, without modality encoders or
+concept embeddings.
+
+## Leakage controls
+
+- Existing subject-level train/validation/test manifests are consumed as-is.
+- Normalization statistics are computed from train subjects only.
+- Every window is checked to remain inside one `segment_id`.
+- Every history and target row must have both `cgm_observed=True` and
+  `insulin_observed=True`.
+- Future CGM is returned only as the target and cannot be passed into either
+  model's transition API.
+
+## Train
+
+Main model:
+
+```bash
+/home/wanghaobo/.conda/envs/pt110/bin/python -m src.train \
+  --model world_model \
+  --output-dir outputs/v1_world_model
+```
+
+Baseline:
+
+```bash
+/home/wanghaobo/.conda/envs/pt110/bin/python -m src.train \
+  --model baseline \
+  --output-dir outputs/v1_baseline
+```
+
+For a CPU smoke test:
+
+```bash
+/home/wanghaobo/.conda/envs/pt110/bin/python -m src.train \
+  --epochs 1 --batch-size 32 --hidden-dim 32 --embedding-dim 8 --event-dim 16 \
+  --max-train-windows 256 --max-val-windows 128 --max-test-windows 128 \
+  --output-dir /tmp/diabetes_world_model_smoke
+```
+
+Outputs include `best.pt`, `history.jsonl`, and `test_metrics.json`.

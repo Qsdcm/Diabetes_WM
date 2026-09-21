@@ -1,5 +1,6 @@
 # Generated datasets and reports
 Dataset_5min/
+outputs/
 
 # Local credentials
 authtoken.txt
