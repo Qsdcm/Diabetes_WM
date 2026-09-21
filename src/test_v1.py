@@ -137,6 +137,7 @@ class DatasetTests(unittest.TestCase):
         self.assertAlmostEqual(stats.insulin_log1p_std, np.log(4.0) / 2)
         self.assertAlmostEqual(stats.carb_log1p_mean, np.log(9.0) / 2)
         self.assertAlmostEqual(stats.carb_log1p_std, np.log(9.0) / 2)
+        self.assertTrue(all(type(value) is float for value in stats.to_dict().values()))
 
 
 if __name__ == "__main__":

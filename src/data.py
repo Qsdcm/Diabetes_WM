@@ -27,7 +27,9 @@ class NormalizationStats:
     carb_log1p_std: float
 
     def to_dict(self) -> dict[str, float]:
-        return asdict(self)
+        # Keep checkpoints compatible with PyTorch's safe weights-only loader:
+        # statistics computed by NumPy must be serialized as Python scalars.
+        return {key: float(value) for key, value in asdict(self).items()}
 
     @classmethod
     def from_dict(cls, values: dict[str, float]) -> "NormalizationStats":
