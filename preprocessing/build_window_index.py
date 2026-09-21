@@ -92,6 +92,46 @@ def _as_bool(series: pd.Series) -> pd.Series:
     return normalized.isin({"true", "1", "yes"})
 
 
+def check_subject_eligibility(
+    subject: SubjectFile,
+    *,
+    history_steps: int,
+    horizon_steps: int,
+) -> tuple[bool, str]:
+    """Return whether a subject can produce at least one strict V1 window."""
+
+    total_steps = history_steps + horizon_steps
+    frame = pd.read_csv(
+        subject.path,
+        usecols=["segment_id", "timestamp", "cgm_observed", "insulin_observed"],
+        parse_dates=["timestamp"],
+    )
+    has_long_enough_segment = False
+    for segment_id, segment in frame.groupby("segment_id", sort=False):
+        segment = segment.sort_values("timestamp")
+        if len(segment) < total_steps:
+            continue
+        has_long_enough_segment = True
+        cadence_ok = segment["timestamp"].diff().dropna().eq(pd.Timedelta(minutes=5)).all()
+        if not cadence_ok:
+            raise ValueError(
+                f"{subject.key} segment {segment_id} is not a continuous 5-minute sequence"
+            )
+        observed = _as_bool(segment["cgm_observed"]) & _as_bool(
+            segment["insulin_observed"]
+        )
+        valid_counts = np.convolve(
+            observed.to_numpy(dtype=np.int8),
+            np.ones(total_steps, dtype=int),
+            mode="valid",
+        )
+        if np.any(valid_counts == total_steps):
+            return True, "eligible"
+    if has_long_enough_segment:
+        return False, "no_fully_observed_window"
+    return False, "no_segment_long_enough"
+
+
 def build_subject_windows(
     subject: SubjectFile,
     *,
@@ -176,8 +216,22 @@ def _assert_no_subject_leakage(splits: dict[str, list[SubjectFile]]) -> None:
 
 def write_indices(args: argparse.Namespace) -> dict[str, object]:
     subjects = discover_subjects(args.dataset_root)
+    eligible_subjects: list[SubjectFile] = []
+    excluded_subjects: list[dict[str, str]] = []
+    for subject in subjects:
+        eligible, reason = check_subject_eligibility(
+            subject,
+            history_steps=args.history_steps,
+            horizon_steps=args.horizon_steps,
+        )
+        if eligible:
+            eligible_subjects.append(subject)
+        else:
+            excluded_subjects.append({"subject": subject.key, "reason": reason})
+            print(f"[exclude] {subject.key}: {reason}")
+
     ratios = (args.train_ratio, args.val_ratio, args.test_ratio)
-    splits = split_subjects(subjects, seed=args.seed, ratios=ratios)
+    splits = split_subjects(eligible_subjects, seed=args.seed, ratios=ratios)
     _assert_no_subject_leakage(splits)
     args.output_root.mkdir(parents=True, exist_ok=True)
 
@@ -217,6 +271,7 @@ def write_indices(args: argparse.Namespace) -> dict[str, object]:
         "horizon_steps": args.horizon_steps,
         "stride": args.stride,
         "subjects": split_manifest,
+        "excluded_subjects": excluded_subjects,
         "window_counts": window_counts,
     }
     (args.output_root / "split_manifest.json").write_text(

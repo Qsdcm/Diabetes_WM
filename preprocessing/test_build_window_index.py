@@ -8,6 +8,7 @@ from preprocessing.build_window_index import (
     SubjectFile,
     _assert_no_subject_leakage,
     build_subject_windows,
+    check_subject_eligibility,
     split_subjects,
 )
 
@@ -61,6 +62,29 @@ class WindowIndexTests(unittest.TestCase):
         )
         for split in first:
             self.assertEqual({item.dataset for item in first[split]}, {"AZT1D", "BrisT1D-Open"})
+
+    def test_subject_without_a_strict_window_is_ineligible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subject = self._write_subject(root)
+            eligible, reason = check_subject_eligibility(
+                subject,
+                history_steps=2,
+                horizon_steps=1,
+            )
+            frame = pd.read_csv(subject.path)
+            frame.loc[[2, 7], "cgm_observed"] = False
+            frame.to_csv(subject.path, index=False)
+            too_strict, strict_reason = check_subject_eligibility(
+                subject,
+                history_steps=2,
+                horizon_steps=1,
+            )
+
+        self.assertTrue(eligible)
+        self.assertEqual(reason, "eligible")
+        self.assertFalse(too_strict)
+        self.assertEqual(strict_reason, "no_fully_observed_window")
 
 
 if __name__ == "__main__":

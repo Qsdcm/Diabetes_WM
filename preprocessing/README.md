@@ -77,6 +77,10 @@ stride 1. The split is deterministic and stratified by source dataset. A
 subject can occur in exactly one split. Windows never cross `segment_id`, and
 every input and target row must satisfy both `cgm_observed=True` and
 `insulin_observed=True`; interpolated CGM is therefore never used as a target.
+Subjects that cannot produce even one valid window under the configured history
+and horizon are excluded before splitting and listed with a reason in
+`split_manifest.json`. They do not count toward train/validation/test subject
+totals.
 
 The generated files are written below `Dataset_5min/window_index_v1/`:
 
